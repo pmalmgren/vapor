@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "vapor"
+version = "0.1.0"
+description = "Effortlessly build distributed applications"
+
+license = "MIT"
+
+authors = [
+    "Peter Malmgren <me@petermalmgren.com>"
+]
+
+readme = "README.md"
+
+repository = "https://github.com/pmalmgren/vapor"
+homepage = "https://github.com/pmalmgren/vapor"
+
+keywords = ["distributed", "task", "actor"]
+
+[tool.poetry.dependencies]
+python = ">=3.5.3"
+pytest = "^3.10"
+pylint = "^2.1"
+toml = "^0.10.0"
+docker = "^3.5"
+starlette = "^0.8.5"
+uvicorn = "^0.3.20"
+jinja2 = "^2.10"
+aiohttp = "^3.4"
+ipdb = "^0.11.0"
+kubernetes = "^8.0"
+

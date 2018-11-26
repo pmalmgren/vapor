@@ -1,0 +1,14 @@
+
+[tool.poetry]
+name = "vapor-helper"
+version = "0.1.0"
+description = "Helper for vapor - Not for publishing :)"
+authors = 'vapor'
+
+[tool.poetry.dependencies]
+python = ">=3.6"
+uvicorn = "@0.3.20"
+starlette = "@0.8.5"
+{% for package, version in dependencies.items() %}
+{{ package }} = "{{ version }}"
+{% endfor %}

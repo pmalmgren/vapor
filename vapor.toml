@@ -1,0 +1,18 @@
+[tool.vapor]
+
+[environments]
+    [environments.py3]
+    configuration = "poetry"
+    dockerfile = "Dockerfile"
+    [environments.py3.dependencies]
+        python = ">=3.6"
+        requests = "@2.20.1"
+        nltk = "@3.3"
+        beautifulsoup4 = "@4.6.3"
+
+[execution]
+    engine = "k8s"
+    [execution.configuration]
+        base-dockerfile = "Dockerfile"
+        tag-prefix = "peterzap"
+        ingress-host = "192.168.99.101"
