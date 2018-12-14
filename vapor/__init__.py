@@ -5,13 +5,17 @@ import inspect
 import hashlib
 import os
 import time
-from aiohttp import ClientSession
+import typing
+from aiohttp import ClientSession, TCPConnector
 from shutil import copyfile
 
 import docker
 import toml
 from jinja2 import Template
 from kubernetes import client, config
+
+from .types import DeployedService
+
 
 TMP_DIR_ROOT = os.path.expanduser('~/.bffs')
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), 'templates')
@@ -46,7 +50,7 @@ app = Router([
 ])
 
 if __name__ == '__main__':
-    uvicorn.run(app, host='0.0.0.0', port=9999, debug=True)
+    uvicorn.run(app, host='0.0.0.0', port=9999)
 """
 
 
@@ -69,7 +73,7 @@ async def execute_with_docker(client, image_tag, call_args, docker_host='localho
 
     print('Executing requests.')
     async def fetch_all():
-        async with ClientSession() as session:
+        async with ClientSession(connector=TCPConnector(verify_ssl=False)) as session:
             tasks = []
             for idx, arg in enumerate(call_args):
                 container = containers[
@@ -84,6 +88,15 @@ async def execute_with_docker(client, image_tag, call_args, docker_host='localho
             return responses
 
     return await fetch_all()
+
+
+def deployment_is_ready(deployment: client.ExtensionsV1beta1Deployment) -> bool:
+    status = deployment.status
+    if (status.updated_replicas == deployment.spec.replicas and
+    status.replicas == deployment.spec.replicas and
+    status.available_replicas == deployment.spec.replicas and
+    status.observed_generation >= deployment.metadata.generation):
+        return True
 
 
 def deploy_and_wait_until_ready(api_instance, deployment_name, image_tag, namespace, timeout=60):
@@ -118,25 +131,21 @@ def deploy_and_wait_until_ready(api_instance, deployment_name, image_tag, namesp
     while time.time() - start < timeout:
         time.sleep(1)
         response = api_instance.read_namespaced_deployment_status(deployment_name, namespace)
-        s = response.status
-        if (s.updated_replicas == response.spec.replicas and
-                s.replicas == response.spec.replicas and
-                s.available_replicas == response.spec.replicas and
-                s.observed_generation >= response.metadata.generation):
+        if deployment_is_ready(response):
             return True
         else:
-            print(f'[updated_replicas:{s.updated_replicas},replicas:{s.replicas}'
-                  ',available_replicas:{s.available_replicas},observed_generation:{s.observed_generation}] waiting...')
+            print(f'[updated_replicas:{response.status.updated_replicas},replicas:{response.status.replicas}'
+                  f',available_replicas:{response.status.available_replicas},observed_generation:{response.status.observed_generation}] waiting...')
 
     raise RuntimeError(f'Waiting timeout for deployment {deployment_name}')
 
 
-def expose_service(api_instance, service_name, namespace):
+def expose_service(api_instance, service_name, namespace, service_type):
     service_body = client.V1Service(
         metadata=client.V1ObjectMeta(name=f'{service_name}'),
         spec=client.V1ServiceSpec(
-            selector={'app': f'{service_name}'},
             type='NodePort',
+            selector={'app': f'{service_name}'},
             ports=[client.V1ServicePort(
                 protocol='TCP',
                 port=9999,
@@ -151,12 +160,52 @@ def expose_service(api_instance, service_name, namespace):
     return service
 
 
-async def execute_with_k8s(image_tag, call_args, fn_name, namespace='default', ingress_host=None):
+def build_ingress(beta_api_instance, service_name, namespace, ingress_host=None):
+    path = client.V1beta1HTTPIngressPath(
+        path=f'/{service_name}',
+        backend=client.V1beta1IngressBackend(
+            service_name=service_name,
+            service_port=9999,
+        )
+    )
+    ingress_body = client.V1beta1Ingress(
+        metadata=client.V1ObjectMeta(
+            name=f'{service_name}-external',
+            annotations={'nginx.ingress.kubernetes.io/rewrite-target': '/'}
+        ),
+        spec=client.V1beta1IngressSpec(
+            rules=[client.V1beta1IngressRule(
+                http=client.V1beta1HTTPIngressRuleValue(
+                    paths=[path],
+                ),
+            )]
+        )
+    )
+    if ingress_host:
+        ingress_body = client.V1beta1Ingress(
+            metadata=client.V1ObjectMeta(
+                name=f'{service_name}-external',
+            ),
+            spec=client.V1beta1IngressSpec(
+                rules=[client.V1beta1IngressRule(
+                    host=ingress_host,
+                    http=client.V1beta1HTTPIngressRuleValue(
+                        paths=[path],
+                    ),
+                )]
+            )
+        )
+    beta_api_instance.create_namespaced_ingress(
+        namespace, ingress_body
+    )
+
+
+async def execute_with_k8s(image_tag, call_args, fn_name, namespace='default', kubernetes_host=None, service_type='NodePort', ingress_host=None):
     config.load_kube_config()
     api_instance = client.ExtensionsV1beta1Api()
     api_instance_2 = client.CoreV1Api()
     fn_name = fn_name.replace('_', '-')
-    ingress_host = ingress_host or fn_name
+    kubernetes_host = kubernetes_host or fn_name
 
     deployments = api_instance.list_namespaced_deployment(namespace=namespace)
     existing_deployment = False
@@ -192,16 +241,29 @@ async def execute_with_k8s(image_tag, call_args, fn_name, namespace='default', i
                 break
 
     if not existing_service:
-        service = expose_service(api_instance_2, fn_name, namespace)
+        service = expose_service(api_instance_2, fn_name, namespace, service_type)
+
+    if service_type == 'Ingress':
+        ingress = api_instance.list_namespaced_ingress(namespace)
+        existing_ingress = False
+        if len(ingress.items) > 0:
+            for ingress in ingress.items:
+                if ingress.metadata.name == f'{fn_name}-external':
+                    existing_ingress = True
+
+        if not existing_ingress:
+            build_ingress(api_instance, fn_name, namespace, ingress_host=ingress_host)
 
     node_port = service.spec.ports[0].node_port
+    url = f'http://{kubernetes_host}:{node_port}/'
+    if service_type == 'Ingress':
+        url = f'https://{kubernetes_host}/{fn_name}'
 
     print('Executing requests.')
     async def fetch_all():
-        async with ClientSession() as session:
+        async with ClientSession(connector=TCPConnector(verify_ssl=False)) as session:
             tasks = []
             for arg in call_args:
-                url = f'http://{ingress_host}:{node_port}/'
                 task = asyncio.ensure_future(fetch(url, session, arg))
                 tasks.append(task)
 
@@ -209,6 +271,10 @@ async def execute_with_k8s(image_tag, call_args, fn_name, namespace='default', i
             return responses
 
     return await fetch_all()
+
+
+async def execute_with_helm(image_tag: str, call_args: str, fn_name: str, config_directory: str, chart: str):
+    return await None
 
 
 async def gather(call_args=None, fn=None, env=None, post_install_items=None):
@@ -274,6 +340,22 @@ async def gather(call_args=None, fn=None, env=None, post_install_items=None):
         return await execute_with_docker(client, image_tag, call_args, docker_host=docker_host)
 
     if parsed_toml.get('execution').get('engine') == 'k8s':
+        kubernetes_host = parsed_toml.get('execution').get('configuration').get('kubernetes-host')
+        namespace = parsed_toml.get('execution').get('configuration').get('namespace') or 'default'
+        service_type = parsed_toml.get('execution').get('configuration').get('service-type')
         ingress_host = parsed_toml.get('execution').get('configuration').get('ingress-host')
-        namespace = parsed_toml.get('execution').get('configuration').get('namespace')
-        return await execute_with_k8s(image_tag, call_args, fn.__name__, ingress_host=ingress_host, namespace=namespace)
+        return await execute_with_k8s(
+            image_tag, call_args, fn.__name__, kubernetes_host=kubernetes_host, namespace=namespace, service_type=service_type, ingress_host=ingress_host
+        )
+
+    if parsed_toml.get('execution').get('engine') == 'helm':
+        config_directory = parsed_toml.get('execution').get('configuration').get('config-directory')
+        chart = parsed_toml.get('execution').get('configuration').get('chart')
+        ingress_host = parsed_toml.get('execution').get('configuration').get('ingress-host')
+        return await execute_with_helm(
+            image_tag, call_args, fn.__name__, config_directory, chart
+        )
+
+
+def bootstrap(fn: typing.Callable[[str], typing.Dict[str, str]], conf: str = 'vapor.toml') -> DeployedService:
+    return DeployedService()
