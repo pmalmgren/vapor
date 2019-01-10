@@ -3,15 +3,15 @@
 [environments]
     [environments.py3]
     configuration = "poetry"
-    [tool.poetry.dependencies]
-    python = ">=3.6"
+    [environments.py3.dependencies]
+    python = ">=3.5"
+    requests = "@2.20.1"
+    nltk = "@3.3"
+    beautifulsoup4 = "@4.6.3"
 
 [execution]
-    engine = "helm"
+    engine = "docker"
+    mode = "parallel"
     [execution.configuration]
-        image-repo = "hub.docker.com"
-        tag-prefix = "peterzap"
-        kubernetes-host = "192.168.99.101"           # minikube ip
-        service-type = "Ingress"                     # we can also expose NodePorts
-        chart = "example-service"
-        config-directory = "~/.vapor-chart-configs"  # the compiled chart configs go here
+    tag-prefix = "peterzap"
+    base-dockerfile = "Dockerfile"

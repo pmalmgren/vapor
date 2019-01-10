@@ -24,7 +24,7 @@ The goal of `vapor` is to provide a tighter feedback loop that can be used to ra
     engine = "docker"
     mode = "parallel"
     [execution.configuration]
-    base-dockerfile: "Dockerfile"
+    base-dockerfile = "Dockerfile"
 ```
 
 ### words.py

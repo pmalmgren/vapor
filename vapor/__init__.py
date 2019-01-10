@@ -290,7 +290,6 @@ async def gather(call_args=None, fn=None, env=None, post_install_items=None):
         os.mkdir(TMP_DIR_ROOT)
 
     dependencies = parsed_toml.get('environments').get(env).get('dependencies')
-    python_version = dependencies.pop('python')  # TODO: Do something with the Python version?
 
     fn_src = inspect.getsource(fn)
     fn_hash = hashlib.md5(fn_src.encode()).hexdigest()
@@ -336,7 +335,7 @@ async def gather(call_args=None, fn=None, env=None, post_install_items=None):
             print(line)
 
     if parsed_toml.get('execution').get('engine') == 'docker':
-        docker_host = parsed_toml.get('execution').get('configuration').get('docker-host')
+        docker_host = parsed_toml.get('execution').get('configuration').get('docker-host') or 'localhost'
         return await execute_with_docker(client, image_tag, call_args, docker_host=docker_host)
 
     if parsed_toml.get('execution').get('engine') == 'k8s':
