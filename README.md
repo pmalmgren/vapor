@@ -1,6 +1,6 @@
 ## vapor
 
-`vapor` is a Python library that aims to make cloud and serverless simple. It does this by turning functions into running servers.
+`vapor` is a Python library that aims to make cloud and serverless development simple. It does this by turning functions into running servers.
 
 The goal of `vapor` is to provide a tighter feedback loop that can be used to rapidly develop, prototype, and test cloud services and functions.
 
